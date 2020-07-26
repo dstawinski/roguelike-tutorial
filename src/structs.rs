@@ -1,8 +1,11 @@
 use tcod::colors::DARK_RED;
+use tcod::colors::ORANGE;
+use tcod::colors::RED;
+use tcod::colors::WHITE;
 use tcod::console::*;
-use tcod::Color;
-
+use tcod::input::{Key, Mouse};
 use tcod::map::Map as FovMap;
+use tcod::Color;
 
 /// Types
 pub type Map = Vec<Vec<Tile>>;
@@ -30,7 +33,10 @@ pub enum DeathCallback {
 pub struct Tcod {
     pub root: Root,
     pub con: Offscreen,
+    pub panel: Offscreen,
     pub fov: FovMap,
+    pub key: Key,
+    pub mouse: Mouse,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -42,6 +48,7 @@ pub struct Tile {
 
 pub struct Game {
     pub map: Map,
+    pub messages: Messages,
 }
 
 // combat-related properties and methods (monster, player, NPC).
@@ -76,6 +83,10 @@ pub struct Rect {
     pub y1: i32,
     pub x2: i32,
     pub y2: i32,
+}
+
+pub struct Messages {
+    messages: Vec<(String, Color)>,
 }
 
 /// Implementations
@@ -133,7 +144,7 @@ impl Object {
         ((dx.pow(2) + dy.pow(2)) as f32).sqrt()
     }
 
-    pub fn take_damage(&mut self, damage: i32) {
+    pub fn take_damage(&mut self, damage: i32, mut game: &mut Game) {
         // apply damage if possible
         if let Some(fighter) = self.fighter.as_mut() {
             if damage > 0 {
@@ -143,25 +154,31 @@ impl Object {
         if let Some(fighter) = self.fighter {
             if fighter.hp <= 0 {
                 self.alive = false;
-                fighter.on_death.callback(self);
+                fighter.on_death.callback(self, &mut game);
             }
         }
     }
 
-    pub fn attack(&mut self, target: &mut Object) {
+    pub fn attack(&mut self, target: &mut Object, game: &mut Game) {
         // a simple formula for attack damage
         let damage = self.fighter.map_or(0, |f| f.power) - target.fighter.map_or(0, |f| f.defense);
         if damage > 0 {
             // make the target take some damage
-            println!(
-                "{} attacks {} for {} hit points.",
-                self.name, target.name, damage
+            game.messages.add(
+                format!(
+                    "{} attacks {} for {} hit points.",
+                    self.name, target.name, damage
+                ),
+                WHITE,
             );
-            target.take_damage(damage);
+            target.take_damage(damage, game);
         } else {
-            println!(
-                "{} attacks {} but it has no effect!",
-                self.name, target.name
+            game.messages.add(
+                format!(
+                    "{} attacks {} but it has no effect!",
+                    self.name, target.name
+                ),
+                WHITE,
             );
         }
     }
@@ -190,33 +207,49 @@ impl Rect {
             && (self.y2 >= other.y1)
     }
 }
-fn player_death(player: &mut Object) {
-    // the game ended!
-    println!("You died!");
-    // for added effect, transform the player into a corpse!
-    player.char = '%';
-    player.color = DARK_RED;
-}
-
-fn monster_death(monster: &mut Object) {
-    // transform it into a nasty corpse! it doesn't block, can't be
-    // attacked and doesn't move
-    println!("{} is dead!", monster.name);
-    monster.char = '%';
-    monster.color = DARK_RED;
-    monster.blocks = false;
-    monster.fighter = None;
-    monster.ai = None;
-    monster.name = format!("remains of {}", monster.name);
-}
 
 impl DeathCallback {
-    pub fn callback(self, object: &mut Object) {
+    fn player_death(player: &mut Object, game: &mut Game) {
+        // the game ended!
+        game.messages.add("You died!", RED);
+        // for added effect, transform the player into a corpse!
+        player.char = '%';
+        player.color = DARK_RED;
+    }
+    fn monster_death(monster: &mut Object, game: &mut Game) {
+        // transform it into a nasty corpse! it doesn't block, can't be
+        // attacked and doesn't move
+        game.messages
+            .add(format!("{} is dead!", monster.name), ORANGE);
+        monster.char = '%';
+        monster.color = DARK_RED;
+        monster.blocks = false;
+        monster.fighter = None;
+        monster.ai = None;
+        monster.name = format!("remains of {}", monster.name);
+    }
+    pub fn callback(self, object: &mut Object, game: &mut Game) {
         use DeathCallback::*;
-        let callback: fn(&mut Object) = match self {
-            Player => player_death,
-            Monster => monster_death,
+        let callback: fn(&mut Object, &mut Game) = match self {
+            Player => DeathCallback::player_death,
+            Monster => DeathCallback::monster_death,
         };
-        callback(object);
+        callback(object, game);
+    }
+}
+
+impl Messages {
+    pub fn new() -> Self {
+        Self { messages: vec![] }
+    }
+
+    /// add the new message as a tuple, with the text and the color
+    pub fn add<T: Into<String>>(&mut self, message: T, color: Color) {
+        self.messages.push((message.into(), color));
+    }
+
+    /// Create a `DoubleEndedIterator` over the messages
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = &(String, Color)> {
+        self.messages.iter()
     }
 }

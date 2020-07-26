@@ -1,17 +1,18 @@
 mod constants;
 mod fov;
 mod map;
-mod render_all;
+mod render;
 mod structs;
 
 use crate::constants::*;
 use crate::fov::*;
 use crate::map::*;
-use crate::render_all::*;
+use crate::render::*;
 use crate::structs::*;
 
 use tcod::colors::*;
 use tcod::console::*;
+use tcod::input::{self, Event};
 use tcod::map::Map as FovMap;
 
 fn main() {
@@ -25,7 +26,10 @@ fn main() {
     let mut tcod = Tcod {
         root,
         con: Offscreen::new(MAP_WIDTH, MAP_HEIGHT),
+        panel: Offscreen::new(SCREEN_WIDTH, PANEL_HEIGHT),
         fov: FovMap::new(MAP_WIDTH, MAP_HEIGHT),
+        key: Default::default(),
+        mouse: Default::default(),
     };
 
     tcod::system::set_fps(LIMIT_FPS);
@@ -45,56 +49,66 @@ fn main() {
 
     let mut game = Game {
         map: make_map(&mut objects),
+        messages: Messages::new(),
     };
 
     setup_fov(&mut tcod.fov, &game);
+
+    // a warm welcoming message!
+    game.messages.add(
+        "Welcome stranger! Prepare to perish in the Tombs of the Ancient Kings.",
+        RED,
+    );
 
     let mut previous_player_position = (-1, -1);
     // Game loop
     while !tcod.root.window_closed() {
         tcod.con.clear();
         let fov_recompute = previous_player_position != objects[PLAYER].pos();
+        match input::check_for_event(input::MOUSE | input::KEY_PRESS) {
+            Some((_, Event::Mouse(m))) => tcod.mouse = m,
+            Some((_, Event::Key(k))) => tcod.key = k,
+            _ => tcod.key = Default::default(),
+        }
         render_all(&mut tcod, &mut game, &objects, fov_recompute);
         tcod.root.flush();
         // handle keys and exit game if needed
         previous_player_position = objects[PLAYER].pos();
-        let map = &game.map;
-        let player_action = handle_keys(&mut tcod, &map, &mut objects);
+        let player_action = handle_keys(&mut tcod, &mut game, &mut objects);
         if player_action == PlayerAction::Exit {
             break;
         }
         if objects[PLAYER].alive && player_action != PlayerAction::DidntTakeTurn {
             for id in 0..objects.len() {
                 if objects[id].ai.is_some() {
-                    ai_take_turn(id, &tcod, &game, &mut objects);
+                    ai_take_turn(id, &tcod, &mut game, &mut objects);
                 }
             }
         }
     }
 }
 
-fn handle_keys(tcod: &mut Tcod, map: &Map, mut objects: &mut [Object]) -> PlayerAction {
+fn handle_keys(tcod: &mut Tcod, game: &mut Game, mut objects: &mut [Object]) -> PlayerAction {
     use tcod::input::Key;
     use tcod::input::KeyCode::*;
     use PlayerAction::*;
-    let key = tcod.root.wait_for_keypress(true);
     let player_alive = objects[PLAYER].alive;
-    match (key, key.text(), player_alive) {
+    match (tcod.key, tcod.key.text(), player_alive) {
         // Movement
         (Key { code: Up, .. }, _, true) => {
-            player_move_or_attack(0, -1, map, &mut objects);
+            player_move_or_attack(0, -1, game, &mut objects);
             TookTurn
         }
         (Key { code: Down, .. }, _, true) => {
-            player_move_or_attack(0, 1, map, &mut objects);
+            player_move_or_attack(0, 1, game, &mut objects);
             TookTurn
         }
         (Key { code: Left, .. }, _, true) => {
-            player_move_or_attack(-1, 0, map, &mut objects);
+            player_move_or_attack(-1, 0, game, &mut objects);
             TookTurn
         }
         (Key { code: Right, .. }, _, true) => {
-            player_move_or_attack(1, 0, map, &mut objects);
+            player_move_or_attack(1, 0, game, &mut objects);
             TookTurn
         }
         // Fullscreen
@@ -126,7 +140,7 @@ fn move_by(id: usize, dx: i32, dy: i32, map: &Map, objects: &mut [Object]) {
     }
 }
 
-fn player_move_or_attack(dx: i32, dy: i32, map: &Map, objects: &mut [Object]) {
+fn player_move_or_attack(dx: i32, dy: i32, game: &mut Game, objects: &mut [Object]) {
     // the coordinates the player is moving to/attacking
     let x = objects[PLAYER].x + dx;
     let y = objects[PLAYER].y + dy;
@@ -139,10 +153,10 @@ fn player_move_or_attack(dx: i32, dy: i32, map: &Map, objects: &mut [Object]) {
     match target_id {
         Some(target_id) => {
             let (player, target) = mut_two(PLAYER, target_id, objects);
-            player.attack(target);
+            player.attack(target, game);
         }
         None => {
-            move_by(PLAYER, dx, dy, map, objects);
+            move_by(PLAYER, dx, dy, &game.map, objects);
         }
     }
 }
@@ -160,7 +174,7 @@ fn move_towards(id: usize, target_x: i32, target_y: i32, map: &Map, objects: &mu
     move_by(id, dx, dy, map, objects);
 }
 
-fn ai_take_turn(monster_id: usize, tcod: &Tcod, game: &Game, objects: &mut [Object]) {
+fn ai_take_turn(monster_id: usize, tcod: &Tcod, game: &mut Game, objects: &mut [Object]) {
     // a basic monster takes its turn. If you can see it, it can see you
     let (monster_x, monster_y) = objects[monster_id].pos();
     if tcod.fov.is_in_fov(monster_x, monster_y) {
@@ -171,7 +185,7 @@ fn ai_take_turn(monster_id: usize, tcod: &Tcod, game: &Game, objects: &mut [Obje
         } else if objects[PLAYER].fighter.map_or(false, |f| f.hp > 0) {
             // close enough, attack! (if the player is still alive.)
             let (monster, player) = mut_two(monster_id, PLAYER, objects);
-            monster.attack(player);
+            monster.attack(player, game);
         }
     }
 }
