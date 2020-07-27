@@ -29,6 +29,17 @@ pub enum DeathCallback {
     Monster,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Item {
+    Heal,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum UseResult {
+    UsedUp,
+    Cancelled,
+}
+
 /// pub structs
 pub struct Tcod {
     pub root: Root,
@@ -49,6 +60,7 @@ pub struct Tile {
 pub struct Game {
     pub map: Map,
     pub messages: Messages,
+    pub inventory: Vec<Object>,
 }
 
 // combat-related properties and methods (monster, player, NPC).
@@ -74,6 +86,7 @@ pub struct Object {
     pub alive: bool,
     pub fighter: Option<Fighter>,
     pub ai: Option<Ai>,
+    pub item: Option<Item>,
 }
 
 /// A rectangle on the map, used to characterise a room.
@@ -120,6 +133,7 @@ impl Object {
             alive: false,
             fighter: None,
             ai: None,
+            item: None,
         }
     }
 
@@ -180,6 +194,16 @@ impl Object {
                 ),
                 WHITE,
             );
+        }
+    }
+
+    /// heal by the given amount, without going over the maximum
+    pub fn heal(&mut self, amount: i32) {
+        if let Some(ref mut fighter) = self.fighter {
+            fighter.hp += amount;
+            if fighter.hp > fighter.max_hp {
+                fighter.hp = fighter.max_hp;
+            }
         }
     }
 }

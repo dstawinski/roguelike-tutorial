@@ -50,6 +50,7 @@ fn main() {
     let mut game = Game {
         map: make_map(&mut objects),
         messages: Messages::new(),
+        inventory: vec![],
     };
 
     setup_fov(&mut tcod.fov, &game);
@@ -88,7 +89,7 @@ fn main() {
     }
 }
 
-fn handle_keys(tcod: &mut Tcod, game: &mut Game, mut objects: &mut [Object]) -> PlayerAction {
+fn handle_keys(tcod: &mut Tcod, game: &mut Game, mut objects: &mut Vec<Object>) -> PlayerAction {
     use tcod::input::Key;
     use tcod::input::KeyCode::*;
     use PlayerAction::*;
@@ -110,6 +111,29 @@ fn handle_keys(tcod: &mut Tcod, game: &mut Game, mut objects: &mut [Object]) -> 
         (Key { code: Right, .. }, _, true) => {
             player_move_or_attack(1, 0, game, &mut objects);
             TookTurn
+        }
+        // Item pickup
+        (Key { code: Text, .. }, "e", true) => {
+            // pick up an item
+            let item_id = objects
+                .iter()
+                .position(|object| object.pos() == objects[PLAYER].pos() && object.item.is_some());
+            if let Some(item_id) = item_id {
+                pick_item_up(item_id, game, &mut objects);
+            }
+            DidntTakeTurn
+        }
+        (Key { code: Text, .. }, "i", true) => {
+            // show the inventory: if an item is selected, use it
+            let inventory_index = inventory_menu(
+                &game.inventory,
+                "Press the key next to an item to use it, or any other to cancel.\n",
+                &mut tcod.root,
+            );
+            if let Some(inventory_index) = inventory_index {
+                use_item(inventory_index, tcod, game, objects);
+            }
+            DidntTakeTurn
         }
         // Fullscreen
         (
@@ -201,5 +225,67 @@ fn mut_two<T>(first_index: usize, second_index: usize, items: &mut [T]) -> (&mut
         (&mut first_slice[first_index], &mut second_slice[0])
     } else {
         (&mut second_slice[0], &mut first_slice[second_index])
+    }
+}
+
+/// add to the player's inventory and remove from the map
+fn pick_item_up(object_id: usize, game: &mut Game, objects: &mut Vec<Object>) {
+    if game.inventory.len() >= 26 {
+        game.messages.add(
+            format!(
+                "Your inventory is full, cannot pick up {}.",
+                objects[object_id].name
+            ),
+            RED,
+        );
+    } else {
+        let item = objects.swap_remove(object_id);
+        game.messages
+            .add(format!("You picked up a {}!", item.name), GREEN);
+        game.inventory.push(item);
+    }
+}
+
+fn cast_heal(
+    _inventory_id: usize,
+    _tcod: &mut Tcod,
+    game: &mut Game,
+    objects: &mut [Object],
+) -> UseResult {
+    // heal the player
+    if let Some(fighter) = objects[PLAYER].fighter {
+        if fighter.hp == fighter.max_hp {
+            game.messages.add("You are already at full health.", RED);
+            return UseResult::Cancelled;
+        }
+        game.messages
+            .add("Your wounds start to feel better!", LIGHT_VIOLET);
+        objects[PLAYER].heal(HEAL_AMOUNT);
+        return UseResult::UsedUp;
+    }
+    UseResult::Cancelled
+}
+
+fn use_item(inventory_id: usize, tcod: &mut Tcod, game: &mut Game, objects: &mut [Object]) {
+    use Item::*;
+    // just call the "use_function" if it is defined
+    if let Some(item) = game.inventory[inventory_id].item {
+        let on_use = match item {
+            Heal => cast_heal,
+        };
+        match on_use(inventory_id, tcod, game, objects) {
+            UseResult::UsedUp => {
+                // destroy after use, unless it was cancelled for some reason
+                game.inventory.remove(inventory_id);
+            }
+            UseResult::Cancelled => {
+                game.messages.add("Cancelled", WHITE);
+            }
+        }
+    } else {
+        game.messages.add(
+            format!("The {} cannot be used.", game.inventory[inventory_id].name),
+            WHITE,
+        );
     }
 }

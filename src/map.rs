@@ -123,6 +123,24 @@ fn place_objects(room: Rect, map: &Map, objects: &mut Vec<Object>) {
             objects.push(monster);
         }
     }
+
+    // choose random number of items
+    let num_items = rand::thread_rng().gen_range(0, MAX_ROOM_ITEMS + 1);
+
+    for _ in 0..num_items {
+        // choose random spot for this item
+        let x = rand::thread_rng().gen_range(room.x1 + 1, room.x2);
+        let y = rand::thread_rng().gen_range(room.y1 + 1, room.y2);
+
+        // only place it if the tile is not blocked
+        if !is_blocked(x, y, map, objects) {
+            // create a healing potion
+            // create a healing potion
+            let mut object = Object::new(x, y, '!', "healing potion", VIOLET, false);
+            object.item = Some(Item::Heal);
+            objects.push(object);
+        }
+    }
 }
 
 pub fn is_blocked(x: i32, y: i32, map: &Map, objects: &[Object]) -> bool {
